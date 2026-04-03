@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>COLQR.G.B LAB — Pro Scanner</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    <style>
+        :root { --neon-green: #00ff9d; --neon-red: #ff3d3d; --neon-blue: #3d99ff; }
+        body { background: #050505; color: #eee; font-family: 'Segoe UI', Roboto, sans-serif; overflow-x: hidden; }
+        
+        /* Tabs */
+        .tab-active { color: var(--neon-green); border-bottom: 3px solid var(--neon-green); text-shadow: 0 0 10px var(--neon-green); }
+        
+        /* Neumorphic Cards */
+        .channel-card { background: #0a0a0a; border: 1px solid #222; border-radius: 16px; transition: 0.3s; }
+        .card-red { border-left: 4px solid var(--neon-red); }
+        .card-green { border-left: 4px solid var(--neon-green); }
+        .card-blue { border-left: 4px solid var(--neon-blue); }
+        
+        /* Scanner Frame */
+        .scanner-viewport { position: relative; width: 100%; max-width: 400px; aspect-ratio: 1; overflow: hidden; border-radius: 24px; transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
+        .scanner-viewport.shrunk { transform: scale(0.85); border-radius: 40px; box-shadow: 0 0 30px rgba(0,255,157,0.2); }
+        
+        .aim-frame {
+            position: absolute; inset: 15%; border: 2px solid rgba(255,255,255,0.2); border-radius: 20px;
+            display: flex; align-items: center; justify-content: center; transition: all 0.4s; z-index: 20;
+        }
+        .aim-frame.detecting { border-color: var(--neon-green); box-shadow: 0 0 20px var(--neon-green); transform: scale(1.05); }
+        .aim-text { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #aaa; text-align: center; }
+        
+        /* Laser Animation */
+        .laser { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 4px; 
+            background: var(--neon-green); box-shadow: 0 0 15px var(--neon-green);
+            z-index: 30; display: none;
+        }
+        .laser-active { display: block; animation: laserMove 1.5s ease-in-out forwards; }
+        @keyframes laserMove { 0% { top: 0; } 100% { top: 100%; } }
+
+        .flash { position: fixed; inset: 0; background: white; opacity: 0; pointer-events: none; z-index: 100; }
+        .flash-active { animation: flashAnim 0.4s ease-out; }
+        @keyframes flashAnim { 0% { opacity: 0.8; } 100% { opacity: 0; } }
+
+        .hidden { display: none; }
+    </style>
+</head>
+<body class="flex flex-col min-h-screen">
+
+    <div id="flash" class="flash"></div>
+
+    <header class="p-4 border-b border-white/5 bg-[#080808] sticky top-0 z-50">
+        <div class="flex items-center justify-between mb-4">
+            <h1 class="font-black text-lg tracking-tighter">
+                <span class="text-white">COLQR</span><span style="color:var(--neon-green)">.G.</span><span style="color:var(--neon-blue)">B</span> <span class="text-xs font-light text-zinc-500 uppercase ml-1">Lab</span>
+            </h1>
+            <button onclick="globalReset()" class="p-2 opacity-50 hover:opacity-100 transition-opacity">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+            </button>
+        </div>
+        <div class="flex justify-center gap-8 text-xs font-bold uppercase tracking-widest">
+            <button id="tab-gen" onclick="switchMode('generate')" class="pb-2 tab-active transition-all">Generate</button>
+            <button id="tab-scan" onclick="switchMode('scan')" class="pb-2 transition-all">Scan</button>
+        </div>
+    </header>
+
+    <main class="flex-1 p-6 max-w-lg mx-auto w-full">
+        
+        <div id="view-generate" class="space-y-4">
+            <div class="channel-card card-red p-4">
+                <label class="text-[10px] text-red-500 font-bold uppercase mb-2 block">Red Channel</label>
+                <textarea id="in-r" class="w-full bg-transparent border-none outline-none text-sm h-12" placeholder="Введите текст..."></textarea>
+            </div>
+            <div class="channel-card card-green p-4">
+                <label class="text-[10px] text-green-500 font-bold uppercase mb-2 block">Green Channel</label>
+                <textarea id="in-g" class="w-full bg-transparent border-none outline-none text-sm h-12" placeholder="Введите текст..."></textarea>
+            </div>
+            <div class="channel-card card-blue p-4">
+                <label class="text-[10px] text-blue-500 font-bold uppercase mb-2 block">Blue Channel</label>
+                <textarea id="in-b" class="w-full bg-transparent border-none outline-none text-sm h-12" placeholder="Введите текст..."></textarea>
+            </div>
+
+            <button onclick="renderFinalQR()" class="w-full py-4 bg-[#00ff9d] text-black font-black rounded-2xl shadow-[0_0_20px_rgba(0,255,157,0.3)] active:scale-95 transition-all uppercase text-xs tracking-widest mt-6">
+                Сгенерировать цветной QR
+            </button>
+
+            <div class="flex flex-col items-center pt-8">
+                <canvas id="qr-out" width="512" height="512" class="w-64 h-64 rounded-xl bg-zinc-900 border border-white/5 opacity-0 transition-opacity"></canvas>
+                <button id="btn-save" onclick="saveImage()" class="mt-4 text-[10px] text-zinc-500 uppercase tracking-widest font-bold hidden">Сохранить изображение</button>
+            </div>
+        </div>
+
+        <div id="view-scan" class="hidden space-y-6">
+            <div id="scan-container" class="scanner-viewport mx-auto bg-zinc-950 border border-white/10">
+                <video id="video" class="absolute inset-0 w-full h-full object-cover" playsinline></video>
+                <canvas id="freeze" class="absolute inset-0 w-full h-full object-cover hidden z-10"></canvas>
+                <div id="laser" class="laser"></div>
+                <div id="aim" class="aim-frame">
+                    <span id="aim-text" class="aim-text">Наведите на QR-код</span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <button onclick="toggleCamera()" class="py-3 bg-zinc-900 rounded-xl text-[10px] font-bold uppercase border border-white/5">Камера On/Off</button>
+                <button onclick="document.getElementById('file-in').click()" class="py-3 bg-zinc-900 rounded-xl text-[10px] font-bold uppercase border border-white/5">Загрузить фото</button>
+                <input type="file" id="file-in" class="hidden" accept="image/*" onchange="handleFile(event)">
+            </div>
+
+            <div id="scan-results" class="space-y-3 pt-4 border-t border-white/5 hidden">
+                <div onclick="retryChannel('r')" class="channel-card card-red p-3 cursor-pointer">
+                    <span class="text-[9px] text-zinc-500 font-bold uppercase">Red Channel</span>
+                    <p id="res-r" class="text-xs mt-1 text-zinc-400">Ожидание...</p>
+                </div>
+                <div onclick="retryChannel('g')" class="channel-card card-green p-3 cursor-pointer">
+                    <span class="text-[9px] text-zinc-500 font-bold uppercase">Green Channel</span>
+                    <p id="res-g" class="text-xs mt-1 text-zinc-400">Ожидание...</p>
+                </div>
+                <div onclick="retryChannel('b')" class="channel-card card-blue p-3 cursor-pointer">
+                    <span class="text-[9px] text-zinc-500 font-bold uppercase">Blue Channel</span>
+                    <p id="res-b" class="text-xs mt-1 text-zinc-400">Ожидание...</p>
+                </div>
+                
+                <button onclick="useDecodedData()" class="w-full py-4 bg-white text-black font-black rounded-xl text-xs uppercase tracking-tighter mt-4">
+                    Сгенерировать QR из этих данных
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const state = {
+            mode: 'generate',
+            scanning: false,
+            decoded: { r: null, g: null, b: null },
+            lockTime: 0,
+            analysisComplete: false
+        };
+
+        const els = {
+            inR: document.getElementById('in-r'), inG: document.getElementById('in-g'), inB: document.getElementById('in-b'),
+            qrOut: document.getElementById('qr-out'),
+            video: document.getElementById('video'), freeze: document.getElementById('freeze'),
+            aim: document.getElementById('aim'), aimText: document.getElementById('aim-text'),
+            laser: document.getElementById('laser'), container: document.getElementById('scan-container'),
+            results: document.getElementById('scan-results'), flash: document.getElementById('flash')
+        };
+
+        // --- AUDIO ENGINE ---
+        const audio = {
+            ctx: null,
+            init() { if(!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)(); },
+            playLaser() {
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(800, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 1.5);
+                gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 1.5);
+                osc.connect(gain); gain.connect(this.ctx.destination);
+                osc.start(); osc.stop(this.ctx.currentTime + 1.5);
+            },
+            playSuccess() {
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.frequency.setValueAtTime(440, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(880, this.ctx.currentTime + 0.1);
+                gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.3);
+                osc.connect(gain); gain.connect(this.ctx.destination);
+                osc.start(); osc.stop(this.ctx.currentTime + 0.3);
+            }
+        };
+
+        // --- BRADLEY LOGIC ---
+        function applyBradley(imgData, chIdx) {
+            const w = imgData.width, h = imgData.height, input = imgData.data;
+            const output = new Uint8ClampedArray(w * h * 4);
+            const intImg = new Int32Array(w * h);
+            const s = Math.floor(w/8), t = 15;
+            for(let y=0; y<h; y++) {
+                let sum = 0;
+                for(let x=0; x<w; x++) {
+                    sum += input[(y*w+x)*4+chIdx];
+                    intImg[y*w+x] = (y > 0 ? intImg[(y-1)*w+x] : 0) + sum;
+                }
+            }
+            for(let y=0; y<h; y++) {
+                for(let x=0; x<w; x++) {
+                    const x1 = Math.max(x-s,0), x2 = Math.min(x+s,w-1);
+                    const y1 = Math.max(y-s,0), y2 = Math.min(y+s,h-1);
+                    const count = (x2-x1)*(y2-y1);
+                    const sum = intImg[y2*w+x2]-intImg[y1*w+x2]-intImg[y2*w+x1]+intImg[y1*w+x1];
+                    const res = (input[(y*w+x)*4+chIdx]*count < sum*(100-t)/100) ? 0 : 255;
+                    const idx = (y*w+x)*4;
+                    output[idx]=output[idx+1]=output[idx+2]=res; output[idx+3]=255;
+                }
+            }
+            return output;
+        }
+
+        // --- MODES ---
+        function switchMode(m) {
+            state.mode = m;
+            document.getElementById('view-generate').classList.toggle('hidden', m !== 'generate');
+            document.getElementById('view-scan').classList.toggle('hidden', m !== 'scan');
+            document.getElementById('tab-gen').classList.toggle('tab-active', m === 'generate');
+            document.getElementById('tab-scan').classList.toggle('tab-active', m === 'scan');
+            if(m === 'scan') startCamera(); else stopCamera();
+        }
+
+        // --- SCAN LOGIC ---
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+                els.video.srcObject = stream; els.video.play();
+                state.scanning = true; requestAnimationFrame(scanLoop);
+                audio.init();
+            } catch(e) { console.error(e); }
+        }
+
+        function stopCamera() {
+            state.scanning = false;
+            if(els.video.srcObject) els.video.srcObject.getTracks().forEach(t => t.stop());
+        }
+
+        function scanLoop() {
+            if(!state.scanning || state.analysisComplete) return;
+            if(els.video.readyState === els.video.HAVE_ENOUGH_DATA) {
+                const canvas = document.createElement('canvas');
+                canvas.width = 480; canvas.height = 480;
+                const ctx = canvas.getContext('2d');
+                const size = Math.min(els.video.videoWidth, els.video.videoHeight);
+                ctx.drawImage(els.video, (els.video.videoWidth-size)/2, (els.video.videoHeight-size)/2, size, size, 0, 0, 480, 480);
+                
+                const data = ctx.getImageData(0,0,480,480);
+                let foundThisFrame = false;
+
+                // Быстрая проверка Синего канала (самый надежный)
+                const blueMono = applyBradley(data, 2);
+                const code = jsQR(blueMono, 480, 480);
+                
+                if(code) {
+                    foundThisFrame = true;
+                    if(state.lockTime === 0) state.lockTime = Date.now();
+                } else {
+                    state.lockTime = 0;
+                }
+
+                updateAimUI(foundThisFrame);
+
+                if(state.lockTime > 0 && (Date.now() - state.lockTime > 1000)) {
+                    finishScan(data);
+                }
+            }
+            requestAnimationFrame(scanLoop);
+        }
+
+        function updateAimUI(detecting) {
+            els.aim.className = `aim-frame ${detecting ? 'detecting' : ''}`;
+            els.aimText.textContent = detecting ? (state.lockTime > 0 ? "Держите ровно..." : "Вижу код...") : "Наведите на QR-код";
+        }
+
+        function finishScan(imgData) {
+            state.analysisComplete = true;
+            stopCamera();
+            
+            // UI Effects
+            els.freeze.width = 480; els.freeze.height = 480;
+            els.freeze.getContext('2d').putImageData(imgData, 0, 0);
+            els.freeze.classList.remove('hidden');
+            els.video.classList.add('hidden');
+            els.container.classList.add('shrunk');
+            els.aim.classList.add('hidden');
+
+            // Анимация сканирования
+            setTimeout(() => {
+                els.laser.classList.add('laser-active');
+                audio.playLaser();
+                
+                setTimeout(() => {
+                    els.flash.classList.add('flash-active');
+                    audio.playSuccess();
+                    decodeAllChannels(imgData);
+                    els.results.classList.remove('hidden');
+                    setTimeout(() => els.flash.classList.remove('flash-active'), 400);
+                }, 1500);
+            }, 300);
+        }
+
+        function decodeAllChannels(imgData) {
+            ['r','g','b'].forEach((ch, i) => {
+                const mono = applyBradley(imgData, i);
+                const code = jsQR(mono, 480, 480);
+                const el = document.getElementById(`res-${ch}`);
+                if(code) {
+                    state.decoded[ch] = code.data;
+                    el.textContent = code.data;
+                    el.classList.remove('text-zinc-500');
+                    el.classList.add('text-white');
+                } else {
+                    el.textContent = "Не удалось прочитать — нажмите для повтора";
+                    el.classList.add('text-zinc-500');
+                }
+            });
+        }
+
+        function handleFile(e) {
+            const file = e.target.files[0];
+            if(!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 480; canvas.height = 480;
+                    const ctx = canvas.getContext('2d');
+                    const min = Math.min(img.width, img.height);
+                    ctx.drawImage(img, (img.width-min)/2, (img.height-min)/2, min, min, 0, 0, 480, 480);
+                    
+                    // Показываем фото в видоискателе
+                    els.video.classList.add('hidden');
+                    els.freeze.width = 480; els.freeze.height = 480;
+                    els.freeze.getContext('2d').drawImage(canvas, 0, 0);
+                    els.freeze.classList.remove('hidden');
+                    els.aimText.textContent = "Фото загружено";
+                    
+                    // После загрузки НЕ сканируем сразу, даем паузу для UX
+                    setTimeout(() => finishScan(ctx.getImageData(0,0,480,480)), 800);
+                };
+                img.src = ev.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // --- GENERATE LOGIC ---
+        function renderFinalQR() {
+            const texts = [els.inR.value, els.inG.value, els.inB.value];
+            if(!texts.some(t => t.trim())) return;
+
+            els.qrOut.style.opacity = 1;
+            const ctx = els.qrOut.getContext('2d');
+            ctx.fillStyle = "#000"; ctx.fillRect(0,0,512,512);
+            ctx.globalCompositeOperation = "lighten";
+
+            texts.forEach((text, i) => {
+                if(!text.trim()) return;
+                const qr = qrcode(0, 'M');
+                qr.addData(unescape(encodeURIComponent(text))); qr.make();
+                const count = qr.getModuleCount();
+                const mod = 512 / count;
+                ctx.fillStyle = i===0 ? "#f00" : (i===1 ? "#0f0" : "#00f");
+                for(let r=0; r<count; r++) {
+                    for(let c=0; c<count; c++) {
+                        if(qr.isDark(r,c)) ctx.fillRect(c*mod, r*mod, mod, mod);
+                    }
+                }
+            });
+            ctx.globalCompositeOperation = "source-over";
+            document.getElementById('btn-save').classList.remove('hidden');
+        }
+
+        function useDecodedData() {
+            els.inR.value = state.decoded.r || "";
+            els.inG.value = state.decoded.g || "";
+            els.inB.value = state.decoded.b || "";
+            switchMode('generate');
+            renderFinalQR();
+        }
+
+        function globalReset() {
+            stopCamera();
+            els.inR.value = els.inG.value = els.inB.value = "";
+            state.decoded = {r:null,g:null,b:null};
+            state.analysisComplete = false;
+            els.qrOut.style.opacity = 0;
+            els.container.classList.remove('shrunk');
+            els.video.classList.remove('hidden');
+            els.freeze.classList.add('hidden');
+            els.aim.classList.remove('hidden');
+            els.results.classList.add('hidden');
+            els.laser.classList.remove('laser-active');
+            switchMode('generate');
+        }
+
+        function saveImage() {
+            const link = document.createElement('a');
+            link.download = 'COLQR_LAB.png';
+            link.href = els.qrOut.toDataURL();
+            link.click();
+        }
+        
+        function toggleCamera() {
+            if(state.scanning) stopCamera(); else startCamera();
+        }
+
+        function retryChannel(ch) {
+            if(!state.analysisComplete) return;
+            // Просто перезапускаем декодирование для этого канала из замороженного кадра
+            const data = els.freeze.getContext('2d').getImageData(0,0,480,480);
+            const idx = ch === 'r' ? 0 : (ch === 'g' ? 1 : 2);
+            const mono = applyBradley(data, idx);
+            const code = jsQR(mono, 480, 480);
+            if(code) {
+                state.decoded[ch] = code.data;
+                const el = document.getElementById(`res-${ch}`);
+                el.textContent = code.data;
+                el.classList.replace('text-zinc-500', 'text-white');
+                audio.playSuccess();
+            }
+        }
+    </script>
+</body>
+</html>
